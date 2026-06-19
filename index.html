@@ -1,0 +1,1107 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Aduana Chile</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel" data-presets="react">
+// ─── QR helpers ──────────────────────────────────────────────────────────────
+const QR_BASE = "https://api.qrserver.com/v1/create-qr-code";
+const qrUrl = (data, size = 160) =>
+  `${QR_BASE}/?size=${size}x${size}&data=${encodeURIComponent(data)}`;
+
+const descargarQR = async (data, nombre) => {
+  try {
+    const res = await fetch(qrUrl(data, 300));
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = `${nombre}.png`;
+    document.body.appendChild(a); a.click();
+    document.body.removeChild(a); URL.revokeObjectURL(url);
+  } catch {
+    alert("No se pudo descargar. Haz clic derecho sobre el QR para guardarlo.");
+  }
+};
+
+// ─── RUT formatter ───────────────────────────────────────────────────────────
+const formatRut = (v) => {
+  const raw = v.replace(/[^0-9kK]/g, "");
+  if (raw.length <= 1) return raw;
+  const body = raw.slice(0, -1).slice(0, 8);
+  const dv = raw.slice(-1).toUpperCase();
+  let fmt = ""; let i = body.length;
+  while (i > 0) {
+    const blk = body.substring(Math.max(0, i - 3), i);
+    fmt = blk + (fmt ? "." + fmt : ""); i -= 3;
+  }
+  return `${fmt}-${dv}`;
+};
+
+// ─── Reusable: Comprobante QR ─────────────────────────────────────────────────
+function ComprobanteQR({ id, detalles, qrData, onVolver }) {
+  const [descargado, setDescargado] = useState(false);
+  return (
+    <div className="modal-fade-in mt-6 pt-6 border-t border-slate-200 text-center bg-slate-50 p-5 rounded-2xl">
+      <div className="inline-flex items-center justify-center w-12 h-12 bg-green-100 text-green-700 rounded-full text-2xl mb-3">✓</div>
+      <h5 className="font-bold text-slate-900 text-base mb-1">Documento {id} — Autorizado</h5>
+      <p className="text-xs text-slate-500 mb-4">Registrado exitosamente. Presente este código en el control fronterizo.</p>
+      <div className="w-40 h-40 mx-auto bg-white rounded-xl border border-slate-200 p-2 mb-4 shadow-sm">
+        <img src={qrUrl(qrData, 160)} alt="QR" className="w-full h-full object-contain" loading="lazy" />
+      </div>
+      <div className="text-left text-xs space-y-1.5 bg-white rounded-xl p-4 border border-slate-200 mb-4 max-w-xs mx-auto">
+        {detalles.map((d, i) => (
+          <p key={i}><span className="font-semibold text-slate-600">{d.label}:</span> <span className="text-slate-800">{d.valor}</span></p>
+        ))}
+      </div>
+      <div className="flex gap-2 justify-center flex-wrap">
+        <button onClick={async () => { await descargarQR(qrData, `comprobante-${id}`); setDescargado(true); }}
+          className={`text-xs px-4 py-2 rounded-lg font-semibold inline-flex items-center justify-center gap-1.5 transition-all ${descargado ? "bg-green-600 text-white" : "bg-blue-900 hover:bg-blue-800 text-white"}`}>
+          {descargado ? "✓ Descargado" : "📥 Descargar QR"}
+        </button>
+        <button onClick={onVolver} className="text-xs text-slate-600 font-medium bg-slate-200 hover:bg-slate-300 px-4 py-2 rounded-lg transition inline-flex items-center justify-center">
+          Nueva solicitud
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ─── Modal wrapper ────────────────────────────────────────────────────────────
+function Modal({ onClose, title, accentColor = "blue", children }) {
+  useEffect(() => {
+    const esc = (e) => e.key === "Escape" && onClose();
+    window.addEventListener("keydown", esc);
+    return () => window.removeEventListener("keydown", esc);
+  }, [onClose]);
+
+  const colors = {
+    blue:   { header: "bg-blue-900",   ring: "focus:ring-blue-400" },
+    green:  { header: "bg-green-800",  ring: "focus:ring-green-400" },
+    purple: { header: "bg-purple-800", ring: "focus:ring-purple-400" },
+  };
+  const c = colors[accentColor] || colors.blue;
+
+  return (
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="modal-card bg-white rounded-3xl shadow-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto"
+        onClick={e => e.stopPropagation()}>
+        <div className={`${c.header} text-white px-7 py-5 rounded-t-3xl flex items-center justify-between sticky top-0 z-10`}>
+          <h2 className="font-bold text-xl">{title}</h2>
+          <button onClick={onClose}
+            className="w-8 h-8 rounded-full bg-white/20 hover:bg-white/40 inline-flex items-center justify-center text-lg transition font-bold leading-none">
+            ×
+          </button>
+        </div>
+        <div className="p-7">{children}</div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Field helpers ────────────────────────────────────────────────────────────
+const Field = ({ label, children }) => (
+  <div className="flex flex-col gap-1">
+    <label className="text-xs font-bold text-slate-500 uppercase tracking-wide">{label}</label>
+    {children}
+  </div>
+);
+const inp = "p-3 text-sm rounded-xl border border-slate-300 focus:outline-none focus:border-blue-700 transition";
+
+// ════════════════════════════════════════════════════════════════════════════════
+function AduanasPrototype() {
+  const [activeTab, setActiveTab] = useState("inicio");
+
+  // ─── Comic Sans easter egg ────────────────────────────────────────────────
+  const [comicSans, setComicSans] = useState(false);
+  const [contactEmail, setContactEmail] = useState("");
+
+  const handleEmailChange = (e) => {
+    const val = e.target.value;
+    setContactEmail(val);
+    if (val === "eeeee") {
+      setComicSans(true);
+    } else if (comicSans) {
+      setComicSans(false);
+    }
+  };
+
+  // ─── Tab navigation (sin animación invasiva) ──────────────────────────────
+  const goTo = (tab) => {
+    if (tab === activeTab) return;
+    setActiveTab(tab);
+  };
+
+  // ─── Pre-registro ─────────────────────────────────────────────────────────
+  const [formData, setFormData] = useState({ nombre:"", rut:"", razonViaje:"", documentoNombre:"" });
+  const [mostrarInforme, setMostrarInforme] = useState(false);
+
+  // ─── Historial ────────────────────────────────────────────────────────────
+  const [historial, setHistorial] = useState([
+    { id:"ADU-782", tipo:"Registro Vehicular",  fecha:"2026-06-10", estado:"Aprobado",  detalle:"Toyota Hilux - KIPL-88", qrData:"ADU-782" },
+    { id:"SAG-451", tipo:"Declaración SAG",      fecha:"2026-06-12", estado:"Validado",  detalle:"Sin productos de riesgo", qrData:"SAG-451" },
+  ]);
+  const addHistorial = (entry) => setHistorial(prev => [entry, ...prev]);
+
+  // ─── Modals ───────────────────────────────────────────────────────────────
+  const [modal, setModal] = useState(null);
+
+  // ─── Auto state ───────────────────────────────────────────────────────────
+  const autoInit = { propietario:"", rutPropietario:"", patenteAuto:"", marca:"", modelo:"", anio:"", seguroInternacional:"si" };
+  const [autoData,   setAutoData]   = useState(autoInit);
+  const [autoComp,   setAutoComp]   = useState(null);
+
+  // ─── SAG state ────────────────────────────────────────────────────────────
+  const sagInit = { nombreDeclarante:"", rutDeclarante:"", paisProcedencia:"", portaVegetal:"no", portaAnimal:"no", portaAlimentos:"no", descripcionProductos:"" };
+  const [sagData, setSagData] = useState(sagInit);
+  const [sagComp, setSagComp] = useState(null);
+
+  // ─── Menores state ────────────────────────────────────────────────────────
+  const menInit = { nombreMenor:"", rutMenor:"", fechaNacimiento:"", nombreAutorizante:"", rutAutorizante:"", relacionMenor:"", destinoViaje:"", documentoNotarial:"" };
+  const [menData, setMenData] = useState(menInit);
+  const [menComp, setMenComp] = useState(null);
+
+  // ─── QR section ───────────────────────────────────────────────────────────
+  const [qrQuery,  setQrQuery]  = useState("");
+  const [qrResult, setQrResult] = useState(null);
+  const [qrError,  setQrError]  = useState("");
+
+  // ─── Change helpers ───────────────────────────────────────────────────────
+  const mkChange = (setter) => (e) => {
+    const { name, value } = e.target;
+    setter(prev => ({
+      ...prev,
+      [name]: name.toLowerCase().includes("rut") ? formatRut(value) : value,
+    }));
+  };
+
+  // ─── Open modal helpers ───────────────────────────────────────────────────
+  const openModal = (which) => {
+    setModal(which);
+    if (which === "auto")    { setAutoData(autoInit); setAutoComp(null); }
+    if (which === "sag")     { setSagData(sagInit);   setSagComp(null); }
+    if (which === "menores") { setMenData(menInit);   setMenComp(null); }
+  };
+  const openFrom = (which) => { goTo("tramites"); setTimeout(() => openModal(which), 100); };
+
+  // ─── Submits ──────────────────────────────────────────────────────────────
+  const handlePreReg = (e) => {
+    e.preventDefault();
+    if (!formData.nombre || !formData.rut || !formData.razonViaje || !formData.documentoNombre) {
+      alert("Completa todos los campos y sube tu documento."); return;
+    }
+    const id = `ADU-${Math.floor(100 + Math.random() * 900)}`;
+    addHistorial({ id, tipo:"Pre-Registro de Viaje", fecha: new Date().toISOString().split("T")[0],
+      estado:"Validado", detalle:`${formData.razonViaje} — ${formData.nombre}`, qrData: formData.rut });
+    setMostrarInforme(true);
+  };
+
+  const handleAutoSubmit = (e) => {
+    e.preventDefault();
+    const id = `AV-${Math.floor(100 + Math.random() * 900)}`;
+    addHistorial({ id, tipo:"Admisión Temporal", fecha: new Date().toISOString().split("T")[0],
+      estado:"Aprobado", detalle:`${autoData.marca} ${autoData.modelo} — ${autoData.patenteAuto.toUpperCase()}`,
+      qrData: autoData.patenteAuto.toUpperCase() });
+    setAutoComp(id);
+  };
+
+  const handleSagSubmit = (e) => {
+    e.preventDefault();
+    if (!sagData.nombreDeclarante || !sagData.rutDeclarante || !sagData.paisProcedencia) {
+      alert("Completa los campos obligatorios."); return;
+    }
+    const tieneRiesgo = sagData.portaVegetal === "si" || sagData.portaAnimal === "si" || sagData.portaAlimentos === "si";
+    const id = `SAG-${Math.floor(100 + Math.random() * 900)}`;
+    addHistorial({ id, tipo:"Declaración SAG", fecha: new Date().toISOString().split("T")[0],
+      estado: tieneRiesgo ? "Revisión Pendiente" : "Validado",
+      detalle: tieneRiesgo ? `Productos declarados — ${sagData.descripcionProductos || "Ver detalle"}` : "Sin productos de riesgo",
+      qrData: id });
+    setSagComp(id);
+  };
+
+  const handleMenSubmit = (e) => {
+    e.preventDefault();
+    if (!menData.nombreMenor || !menData.rutMenor || !menData.nombreAutorizante || !menData.rutAutorizante || !menData.documentoNotarial) {
+      alert("Completa todos los campos y sube el documento notarial."); return;
+    }
+    const id = `MEN-${Math.floor(100 + Math.random() * 900)}`;
+    addHistorial({ id, tipo:"Permiso de Menor", fecha: new Date().toISOString().split("T")[0],
+      estado:"Validado PDI", detalle:`${menData.nombreMenor} → ${menData.destinoViaje || "Sin destino especificado"}`,
+      qrData: id });
+    setMenComp(id);
+  };
+
+  // ─── QR search ────────────────────────────────────────────────────────────
+  const buscarQR = () => {
+    setQrError(""); setQrResult(null);
+    if (!qrQuery.trim()) { setQrError("Ingresa un ID de trámite."); return; }
+    const found = historial.find(t => t.id.toLowerCase() === qrQuery.trim().toLowerCase());
+    if (found) setQrResult(found);
+    else setQrError(`No se encontró el trámite "${qrQuery}". Verifica el ID e intenta de nuevo.`);
+  };
+
+  // ─── Status badge ─────────────────────────────────────────────────────────
+  const estadoBadge = (est) => {
+    const map = {
+      "Aprobado":           "bg-green-100 text-green-800",
+      "Validado":           "bg-green-100 text-green-800",
+      "Validado PDI":       "bg-blue-100 text-blue-800",
+      "Revisión Pendiente": "bg-orange-100 text-orange-800",
+    };
+    return map[est] || "bg-slate-100 text-slate-700";
+  };
+
+  // ─── Fronteras data ───────────────────────────────────────────────────────
+  const fronteras = [
+    {
+      nombre: "Los Libertadores", sub: "Ruta 60-CH — Valparaíso → Mendoza",
+      estado: "CONGESTIÓN", estadoColor: "orange",
+      espera: "~2 hrs", tendencia: "↑ Aumentando", climaIcon: "☀️", clima: "Despejado, 14°C",
+      ventanillas: 6, totalVentanillas: 10,
+      vehiculosHoy: 1842, pasajerosHoy: 4210,
+      aviso: "Alta demanda por fin de semana largo. Recomendamos pre-registro digital.",
+      avisoType: "warning", horario: "24 horas",
+      servicios: ["SAG", "PDI", "Aduana", "Cambio de moneda"],
+    },
+    {
+      nombre: "Horcones", sub: "Complejo Argentino — Integrado binacional",
+      estado: "NORMAL", estadoColor: "green",
+      espera: "~15 min", tendencia: "→ Estable", climaIcon: "🌤️", clima: "Viento moderado, 11°C",
+      ventanillas: 8, totalVentanillas: 8,
+      vehiculosHoy: 620, pasajerosHoy: 1380,
+      aviso: "Interoperabilidad activa. Datos compartidos en tiempo real con Argentina.",
+      avisoType: "success", horario: "24 horas",
+      servicios: ["SAG", "PDI", "Aduana"],
+    },
+    {
+      nombre: "Paso Jama", sub: "Ruta 27 — San Pedro de Atacama → Jujuy",
+      estado: "BAJO FLUJO", estadoColor: "blue",
+      espera: "~5 min", tendencia: "↓ Disminuyendo", climaIcon: "🌨️", clima: "Frío, -2°C / nieve ligera",
+      ventanillas: 4, totalVentanillas: 6,
+      vehiculosHoy: 198, pasajerosHoy: 430,
+      aviso: "Precaución por temperatura bajo cero. Cadenas recomendadas en el altiplano.",
+      avisoType: "info", horario: "08:00 – 22:00",
+      servicios: ["SAG", "PDI", "Aduana"],
+    },
+    {
+      nombre: "Chungará", sub: "Ruta A-19 — Putre → Bolivia (Tambo Quemado)",
+      estado: "CERRADO", estadoColor: "red",
+      espera: "—", tendencia: "Reapertura estimada 18:00", climaIcon: "❄️", clima: "Nevada intensa, -8°C",
+      ventanillas: 0, totalVentanillas: 4,
+      vehiculosHoy: 0, pasajerosHoy: 0,
+      aviso: "Cierre temporal por condiciones climáticas extremas. Consulte antes de viajar.",
+      avisoType: "danger", horario: "07:00 – 21:00 (cerrado)",
+      servicios: ["SAG", "PDI", "Aduana"],
+    },
+  ];
+
+  const colorMap = {
+    orange: { header:"bg-orange-600", badge:"bg-white text-orange-700", bar:"bg-orange-400", aviso:"bg-orange-50 border-orange-200 text-orange-800" },
+    green:  { header:"bg-green-600",  badge:"bg-white text-green-700",  bar:"bg-green-400",  aviso:"bg-green-50 border-green-200 text-green-800" },
+    blue:   { header:"bg-blue-600",   badge:"bg-white text-blue-700",   bar:"bg-blue-400",   aviso:"bg-blue-50 border-blue-200 text-blue-800" },
+    red:    { header:"bg-red-700",    badge:"bg-white text-red-700",    bar:"bg-red-300",    aviso:"bg-red-50 border-red-200 text-red-800" },
+  };
+
+  // ════════════════════════════════════════════════════════════════════════════
+  return (
+    <div className="min-h-screen bg-slate-100 text-slate-800 font-sans" style={comicSans ? {fontFamily:"'Comic Sans MS', 'Comic Sans', cursive"} : {}}>
+      <style>{`
+        /* ── Modal ── */
+        .modal-overlay { background:rgba(15,23,42,.55); backdrop-filter:blur(4px); animation:fadeIn .2s ease both; }
+        .modal-card    { animation:modalIn .28s cubic-bezier(.34,1.3,.64,1) both; }
+        @keyframes fadeIn  { from{opacity:0} to{opacity:1} }
+        @keyframes modalIn { from{opacity:0;transform:scale(.94) translateY(16px)} to{opacity:1;transform:scale(1) translateY(0)} }
+
+        /* ── Misc ── */
+        .modal-fade-in { animation: fadeIn .3s ease both; }
+        .card-hover { transition: transform .18s ease, box-shadow .18s ease; }
+        .card-hover:hover { transform: translateY(-3px); box-shadow:0 8px 24px rgba(0,0,0,.1); }
+
+        /* ── Ventanilla bar ── */
+        .bar-fill { transition: width .8s cubic-bezier(.4,0,.2,1); }
+
+        /* ── Pulse badge ── */
+        @keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.3} }
+        .pulse-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+        /* ── Botones con texto centrado (excepto tarjetas de inicio) ── */
+        button:not(.inicio-card) {
+          display: inline-flex;
+          align-items: center;
+          justify-content: center;
+          text-align: center;
+        }
+
+        /* ── Indicador activo en la navbar ── */
+        .nav-tab {
+          position: relative;
+          transition: color .2s;
+        }
+        .nav-tab::after {
+          content: '';
+          position: absolute;
+          bottom: -2px;
+          left: 0;
+          width: 100%;
+          height: 2px;
+          background: white;
+          transform: scaleX(0);
+          transition: transform .25s cubic-bezier(.4,0,.2,1);
+          transform-origin: center;
+        }
+        .nav-tab.active::after {
+          transform: scaleX(1);
+        }
+
+        /* ── Toast ── */
+        .toast {
+          position: fixed;
+          bottom: 28px;
+          right: 28px;
+          background: #1e293b;
+          color: white;
+          padding: 12px 18px;
+          border-radius: 14px;
+          font-size: 13px;
+          font-weight: 500;
+          z-index: 9999;
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          box-shadow: 0 8px 24px rgba(0,0,0,.25);
+          animation: toastIn .3s cubic-bezier(.34,1.3,.64,1) both;
+        }
+        @keyframes toastIn {
+          from { opacity:0; transform: translateY(16px) scale(.95); }
+          to   { opacity:1; transform: translateY(0) scale(1); }
+        }
+        .toast.out {
+          animation: toastOut .25s ease both;
+        }
+        @keyframes toastOut {
+          to { opacity:0; transform: translateY(8px); }
+        }
+
+        /* ── Comic Sans easter egg ── */
+        .comic-sans-active * {
+          font-family: 'Comic Sans MS', 'Comic Sans', cursive !important;
+        }
+      `}</style>
+
+      {/* ── TOAST ─────────────────────────────────────────────────────────── */}
+      <Toast />
+
+      {/* ── HEADER ─────────────────────────────────────────────────────────── */}
+      <header className="bg-blue-900 text-white px-8 py-5 shadow-lg flex justify-between items-center sticky top-0 z-40">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">ADUANA CHILE</h1>
+          <p className="text-sm opacity-70">Sistema Inteligente de Fronteras</p>
+        </div>
+        <nav className="flex gap-6 text-sm font-medium">
+          {[["inicio","Inicio"],["tramites","Trámites"],["fronteras","Estado Fronteras"],["qr","Código QR"],["contacto","Contacto"]].map(([tab, label]) => (
+            <button key={tab} onClick={() => goTo(tab)}
+              className={`nav-tab pb-1 ${activeTab===tab ? "active text-white" : "text-blue-200 hover:text-white"}`}>
+              {label}
+            </button>
+          ))}
+        </nav>
+      </header>
+
+      {/* ── CONTENT ────────────────────────────────────────────────────────── */}
+      <div>
+
+        {/* ═══ INICIO ════════════════════════════════════════════════════════ */}
+        {activeTab === "inicio" && (
+          <>
+            {/* Hero */}
+            <section className="bg-gradient-to-r from-blue-900 to-blue-700 text-white py-20 px-8">
+              <div className="max-w-6xl mx-auto grid md:grid-cols-2 gap-10 items-center">
+                <div>
+                  <h2 className="text-5xl font-bold leading-tight mb-6">Reduce tu tiempo de espera en Aduanas</h2>
+                  <p className="text-lg opacity-90 mb-8">Realiza tus trámites online antes de llegar a la frontera. Automatizamos vehículos, permisos y validaciones.</p>
+                  <a href="#pre-registro" className="inline-flex items-center justify-center bg-white text-blue-900 px-6 py-3 rounded-2xl font-semibold shadow-lg hover:scale-105 transition">
+                    Iniciar Trámite
+                  </a>
+                </div>
+                <div className="bg-white rounded-3xl shadow-2xl p-8 text-slate-800">
+                  <div className="flex justify-between items-center mb-5">
+                    <h3 className="text-xl font-bold">Estado en tiempo real</h3>
+                    <button onClick={() => goTo("fronteras")} className="text-sm text-blue-700 hover:underline">Ver todos →</button>
+                  </div>
+                  <div className="space-y-3">
+                    {[
+                      { n:"Los Libertadores", color:"orange", espera:"2 hrs", dot:"bg-orange-400" },
+                      { n:"Horcones",          color:"green",  espera:"15 min", dot:"bg-green-400" },
+                      { n:"Paso Jama",         color:"blue",   espera:"5 min",  dot:"bg-blue-400" },
+                    ].map(p => (
+                      <div key={p.n} className="bg-slate-50 rounded-xl p-3 flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                          <span className={`w-2 h-2 rounded-full pulse-dot ${p.dot}`}></span>
+                          <span className="font-medium text-sm">{p.n}</span>
+                        </div>
+                        <span className={`text-xs font-semibold px-2 py-1 rounded-full ${p.color==="orange"?"bg-orange-100 text-orange-700":p.color==="green"?"bg-green-100 text-green-700":"bg-blue-100 text-blue-700"}`}>{p.espera}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Cards servicios — estilo original, texto alineado a la izquierda */}
+            <section className="max-w-6xl mx-auto px-8 py-16">
+              <div className="text-center mb-12">
+                <h2 className="text-4xl font-bold mb-3">Servicios Digitales</h2>
+                <p className="text-slate-500 text-lg">Selecciona un servicio para comenzar su tramitación inmediata.</p>
+              </div>
+              <div className="grid md:grid-cols-4 gap-6">
+                {[
+                  { icon:"🚗", label:"Registro Vehicular", desc:"Admisión temporal de vehículos particulares.", accent:"blue",   action:() => openFrom("auto") },
+                  { icon:"📄", label:"Permisos Menores",   desc:"Subida de actas notariales para menores.",   accent:"purple", action:() => openFrom("menores") },
+                  { icon:"🌱", label:"Declaración SAG",    desc:"Declaración jurada digital fitosanitaria.",   accent:"green",  action:() => openFrom("sag") },
+                  { icon:"📱", label:"Código QR",          desc:"Validación ágil de comprobantes en control.", accent:"cyan",   action:() => goTo("qr") },
+                ].map(s => (
+                  <button key={s.label} onClick={s.action}
+                    className={`inicio-card card-hover bg-white rounded-2xl p-6 shadow-sm border border-${s.accent}-100 hover:border-${s.accent}-400 text-left group w-full block`}
+                    style={{display:"block", textAlign:"left"}}>
+                    <div className="text-3xl mb-3 group-hover:scale-110 transition-transform duration-200">{s.icon}</div>
+                    <h4 className={`font-bold text-lg mb-1 text-slate-900 group-hover:text-${s.accent}-900`}>{s.label}</h4>
+                    <p className="text-slate-500 text-xs mb-3">{s.desc}</p>
+                    <span className={`text-${s.accent}-700 text-xs font-bold`}>Abrir formulario →</span>
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            {/* Pre-registro */}
+            <section id="pre-registro" className="bg-slate-50 py-16 px-8 border-t border-slate-200">
+              <div className="max-w-3xl mx-auto bg-white rounded-3xl shadow-lg p-10">
+                {!mostrarInforme ? (
+                  <form onSubmit={handlePreReg}>
+                    <h2 className="text-3xl font-bold mb-2 text-center">Pre Registro de Viaje</h2>
+                    <p className="text-slate-500 text-center mb-8 text-sm">Completa tus datos para interoperabilidad automática con pasos fronterizos.</p>
+                    <div className="grid md:grid-cols-2 gap-5">
+                      <Field label="Nombre Completo">
+                        <input name="nombre" value={formData.nombre} onChange={mkChange(setFormData)} placeholder="Ej: Juan Pérez" className={inp} required />
+                      </Field>
+                      <Field label="RUT o Pasaporte">
+                        <input name="rut" value={formData.rut} onChange={mkChange(setFormData)} placeholder="Ej: 12.345.678-9" className={inp} required />
+                      </Field>
+                      <Field label="Razón del Viaje" className="md:col-span-2">
+                        <select name="razonViaje" value={formData.razonViaje} onChange={mkChange(setFormData)} className={`${inp} bg-white`} required>
+                          <option value="">Seleccione una opción</option>
+                          <option>Turismo / Vacaciones</option>
+                          <option>Trabajo / Negocios</option>
+                          <option>Residencia / Retorno</option>
+                          <option>Tránsito hacia otro país</option>
+                        </select>
+                      </Field>
+                      <div className="md:col-span-2">
+                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Documento de Identidad</label>
+                        <label className="border-2 border-dashed border-slate-300 hover:border-blue-700 rounded-xl p-6 text-center cursor-pointer block bg-slate-50 transition">
+                          <input type="file" accept="image/*,.pdf" className="hidden"
+                            onChange={e => e.target.files?.[0] && setFormData(p => ({...p, documentoNombre: e.target.files[0].name}))} />
+                          <span className="text-3xl block mb-1">📷</span>
+                          <p className="text-sm font-semibold text-slate-600">Haz clic para subir o escanear</p>
+                          <p className="text-xs text-slate-400 mt-1">JPG, PNG, PDF — Máx. 5 MB</p>
+                          {formData.documentoNombre && <p className="text-xs text-green-600 font-bold mt-2">✓ {formData.documentoNombre}</p>}
+                        </label>
+                      </div>
+                    </div>
+                    <button type="submit" className="mt-8 w-full bg-blue-900 hover:bg-blue-800 text-white py-4 rounded-2xl font-semibold text-lg shadow-lg transition hover:scale-[1.01]">
+                      Enviar Información
+                    </button>
+                  </form>
+                ) : (
+                  <div className="text-center modal-fade-in">
+                    <div className="inline-flex items-center justify-center p-4 bg-green-100 text-green-700 rounded-full text-5xl mb-4">✓</div>
+                    <h2 className="text-3xl font-bold mb-2">¡Pre-registro Exitoso!</h2>
+                    <p className="text-slate-500 mb-6">Tu trámite ha sido indexado. Muestra este QR en el control fronterizo.</p>
+                    <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm max-w-xs mx-auto mb-6">
+                      <div className="w-44 h-44 mx-auto mb-4 bg-slate-50 rounded-xl border p-2">
+                        <img src={qrUrl(formData.rut, 200)} alt="QR" className="w-full h-full object-contain" />
+                      </div>
+                      <div className="text-left text-xs space-y-1.5 pt-3 border-t text-slate-700">
+                        <p><strong>Viajero:</strong> {formData.nombre}</p>
+                        <p><strong>ID:</strong> {formData.rut}</p>
+                        <p><strong>Motivo:</strong> {formData.razonViaje}</p>
+                        <p><strong>Doc:</strong> ✓ {formData.documentoNombre}</p>
+                      </div>
+                    </div>
+                    <button onClick={() => { setMostrarInforme(false); setFormData({ nombre:"", rut:"", razonViaje:"", documentoNombre:"" }); }}
+                      className="bg-slate-200 hover:bg-slate-300 px-5 py-2 rounded-xl text-sm font-medium transition">
+                      Hacer otro registro
+                    </button>
+                  </div>
+                )}
+              </div>
+            </section>
+          </>
+        )}
+
+        {/* ═══ TRÁMITES ══════════════════════════════════════════════════════ */}
+        {activeTab === "tramites" && (
+          <section className="max-w-6xl mx-auto px-8 py-12">
+            <div className="mb-8">
+              <h2 className="text-4xl font-bold">Portal Digital de Trámites</h2>
+              <p className="text-slate-500 mt-1">Gestione, revise y descargue sus autorizaciones aduaneras.</p>
+            </div>
+            <div className="grid lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 space-y-4">
+                <h3 className="font-bold text-slate-700 text-sm uppercase tracking-wider mb-3">Nueva Solicitud</h3>
+                {[
+                  { icon:"🚗", title:"Declaración de Admisión Temporal de Vehículos",
+                    desc:"Requisito obligatorio para el cruce fronterizo de vehículos particulares hacia o desde el extranjero.",
+                    color:"blue", modal:"auto" },
+                  { icon:"🌱", title:"Declaración Jurada Conjunta SAG-Aduanas",
+                    desc:"Declare si porta productos de origen vegetal o animal para evitar multas en el control fitosanitario.",
+                    color:"green", modal:"sag" },
+                  { icon:"📄", title:"Carga Digital de Permisos de Menores",
+                    desc:"Adjunte autorizaciones notariales para validación automatizada de PDI.",
+                    color:"purple", modal:"menores" },
+                ].map(item => (
+                  <div key={item.modal} className="card-hover bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
+                    <div className="flex items-start gap-4">
+                      <div className={`text-3xl bg-${item.color}-50 p-3 rounded-xl`}>{item.icon}</div>
+                      <div className="flex-1">
+                        <h4 className="font-bold text-lg text-slate-900 mb-1">{item.title}</h4>
+                        <p className="text-sm text-slate-500 mb-3">{item.desc}</p>
+                        <button onClick={() => openModal(item.modal)}
+                          className={`bg-${item.color==="green"?"green-700":item.color==="purple"?"purple-700":"blue-900"} hover:opacity-90 text-white text-xs px-4 py-2 rounded-lg font-medium transition`}>
+                          Abrir formulario
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 h-fit">
+                <h3 className="font-bold text-slate-800 text-lg mb-4">Mis Registros</h3>
+                <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
+                  {historial.map((item, idx) => (
+                    <div key={idx} className="p-4 bg-slate-50 rounded-xl border border-slate-200 text-xs hover:border-blue-200 transition">
+                      <div className="flex justify-between items-center mb-2">
+                        <span className="font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded font-bold text-xs">{item.id}</span>
+                        <span className={`px-2 py-0.5 rounded-full font-semibold text-xs ${estadoBadge(item.estado)}`}>{item.estado}</span>
+                      </div>
+                      <p className="font-bold text-slate-900 text-sm">{item.tipo}</p>
+                      <p className="text-slate-400 text-xs mb-1">{item.fecha}</p>
+                      <p className="text-slate-600 italic border-t pt-2 border-slate-200 text-xs">{item.detalle}</p>
+                      <button onClick={() => descargarQR(item.qrData || item.id, `qr-${item.id}`)}
+                        className="mt-3 w-full bg-blue-900 hover:bg-blue-800 text-white py-1.5 rounded-lg text-xs font-medium transition">
+                        📥 Descargar QR
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ═══ FRONTERAS ═════════════════════════════════════════════════════ */}
+        {activeTab === "fronteras" && (
+          <section className="max-w-6xl mx-auto px-8 py-12">
+            <div className="flex justify-between items-end mb-8 flex-wrap gap-4">
+              <div>
+                <h2 className="text-4xl font-bold">Estado de Pasos Fronterizos</h2>
+                <p className="text-slate-500 mt-1 flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-green-400 pulse-dot inline-block"></span>
+                  Actualizado en tiempo real · 4 pasos monitoreados
+                </p>
+              </div>
+              <div className="text-xs text-slate-400 bg-white border border-slate-200 rounded-xl px-4 py-2">
+                Última actualización: hoy, {new Date().toLocaleTimeString("es-CL", {hour:"2-digit",minute:"2-digit"})}
+              </div>
+            </div>
+
+            <div className="grid md:grid-cols-2 gap-6">
+              {fronteras.map(f => {
+                const c = colorMap[f.estadoColor];
+                const pct = f.totalVentanillas > 0 ? Math.round((f.ventanillas / f.totalVentanillas) * 100) : 0;
+                return (
+                  <div key={f.nombre} className="card-hover bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+                    <div className={`${c.header} text-white px-6 py-4`}>
+                      <div className="flex justify-between items-start">
+                        <div>
+                          <h3 className="font-bold text-xl">{f.nombre}</h3>
+                          <p className="text-xs opacity-80 mt-0.5">{f.sub}</p>
+                        </div>
+                        <span className={`${c.badge} text-xs px-3 py-1 rounded-full font-bold`}>{f.estado}</span>
+                      </div>
+                    </div>
+                    <div className="p-5">
+                      <div className="grid grid-cols-2 gap-4 mb-4">
+                        <div className="bg-slate-50 rounded-xl p-3 text-center">
+                          <p className="text-2xl font-bold text-slate-900">{f.espera}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">Tiempo de espera</p>
+                          <p className={`text-xs font-semibold mt-1 ${f.tendencia.startsWith("↑")?"text-red-500":f.tendencia.startsWith("↓")?"text-green-600":"text-slate-500"}`}>{f.tendencia}</p>
+                        </div>
+                        <div className="bg-slate-50 rounded-xl p-3 text-center">
+                          <p className="text-lg font-bold text-slate-900">{f.climaIcon} {f.clima.split(",")[1]?.trim() || ""}</p>
+                          <p className="text-xs text-slate-500 mt-0.5">{f.clima.split(",")[0]}</p>
+                          <p className="text-xs text-slate-400 mt-1">Horario: {f.horario}</p>
+                        </div>
+                      </div>
+                      <div className="mb-4">
+                        <div className="flex justify-between text-xs text-slate-500 mb-1.5">
+                          <span>Ventanillas operativas</span>
+                          <span className="font-bold text-slate-700">{f.ventanillas} / {f.totalVentanillas}</span>
+                        </div>
+                        <div className="h-2 bg-slate-200 rounded-full overflow-hidden">
+                          <div className={`h-full bar-fill ${c.bar} rounded-full`} style={{width:`${pct}%`}}></div>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3 mb-4">
+                        <div className="border border-slate-200 rounded-xl p-3 text-center">
+                          <p className="font-bold text-slate-800">{f.vehiculosHoy.toLocaleString("es-CL")}</p>
+                          <p className="text-xs text-slate-500">Vehículos hoy</p>
+                        </div>
+                        <div className="border border-slate-200 rounded-xl p-3 text-center">
+                          <p className="font-bold text-slate-800">{f.pasajerosHoy.toLocaleString("es-CL")}</p>
+                          <p className="text-xs text-slate-500">Pasajeros hoy</p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 mb-4">
+                        {f.servicios.map(s => (
+                          <span key={s} className="bg-slate-100 text-slate-600 text-xs px-2 py-1 rounded-full font-medium">{s}</span>
+                        ))}
+                      </div>
+                      <div className={`border rounded-xl p-3 text-xs font-medium ${c.aviso}`}>
+                        {f.avisoType==="warning"?"⚠️":f.avisoType==="danger"?"🚫":f.avisoType==="info"?"❄️":"✓"} {f.aviso}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {/* ═══ CÓDIGO QR ═════════════════════════════════════════════════════ */}
+        {activeTab === "qr" && (
+          <section className="max-w-6xl mx-auto px-8 py-12">
+            <div className="mb-8">
+              <h2 className="text-4xl font-bold">Centro de Códigos QR</h2>
+              <p className="text-slate-500 mt-1">Consulta, descarga y valida los comprobantes de tus trámites.</p>
+            </div>
+            <div className="grid lg:grid-cols-3 gap-8">
+              <div className="lg:col-span-2 space-y-6">
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                  <h3 className="font-bold text-lg text-slate-800 mb-1">Buscar por ID de Trámite</h3>
+                  <p className="text-xs text-slate-500 mb-4">Ingresa el código de tu comprobante (ej: ADU-782, SAG-451)</p>
+                  <div className="flex gap-3">
+                    <input value={qrQuery} onChange={e => setQrQuery(e.target.value.toUpperCase())}
+                      onKeyDown={e => e.key==="Enter" && buscarQR()}
+                      placeholder="Ej: ADU-782"
+                      className="flex-1 p-3 rounded-xl border border-slate-300 text-sm font-mono focus:outline-none focus:border-cyan-600 transition" />
+                    <button onClick={buscarQR} className="bg-cyan-700 hover:bg-cyan-800 text-white px-5 py-3 rounded-xl text-sm font-semibold transition hover:scale-[1.03]">
+                      Buscar
+                    </button>
+                  </div>
+                  {qrError && <p className="text-xs text-red-600 mt-3 bg-red-50 border border-red-200 p-3 rounded-xl">{qrError}</p>}
+                  {qrResult && (
+                    <div className="mt-4 modal-fade-in bg-cyan-50 border border-cyan-200 rounded-xl p-4 flex gap-4 items-start">
+                      <div className="w-28 h-28 bg-white rounded-xl border p-1.5 shrink-0 shadow-sm">
+                        <img src={qrUrl(qrResult.qrData || qrResult.id, 120)} alt="QR" className="w-full h-full object-contain" />
+                      </div>
+                      <div className="flex-1 text-xs space-y-1">
+                        <p className="font-mono font-bold text-cyan-900 text-sm">{qrResult.id}</p>
+                        <p><strong>Tipo:</strong> {qrResult.tipo}</p>
+                        <p><strong>Estado:</strong> <span className={`font-semibold ${qrResult.estado==="Revisión Pendiente"?"text-orange-600":"text-green-700"}`}>{qrResult.estado}</span></p>
+                        <p><strong>Fecha:</strong> {qrResult.fecha}</p>
+                        <p className="italic text-slate-500">{qrResult.detalle}</p>
+                        <button onClick={() => descargarQR(qrResult.qrData||qrResult.id, `qr-${qrResult.id}`)}
+                          className="mt-2 bg-cyan-700 hover:bg-cyan-800 text-white text-xs px-3 py-1.5 rounded-lg transition">
+                          📥 Descargar QR
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                  <h3 className="font-bold text-lg text-slate-800 mb-4">Todos mis Comprobantes</h3>
+                  {historial.length === 0 ? (
+                    <p className="text-slate-400 text-sm text-center py-10">Aún no tienes trámites. ¡Empieza desde la sección Trámites!</p>
+                  ) : (
+                    <div className="grid sm:grid-cols-2 gap-4">
+                      {historial.map((item, idx) => {
+                        const src = qrUrl(item.qrData || item.id, 100);
+                        return (
+                          <div key={idx} className="card-hover border border-slate-200 rounded-xl p-4 bg-slate-50 flex gap-3 items-start">
+                            <div className="w-20 h-20 bg-white rounded-xl border p-1.5 shrink-0 shadow-sm">
+                              <img src={src} alt={`QR ${item.id}`} className="w-full h-full object-contain" />
+                            </div>
+                            <div className="flex-1 min-w-0 text-xs">
+                              <p className="font-mono font-bold text-slate-800">{item.id}</p>
+                              <p className="font-semibold text-slate-700 mt-0.5 text-xs">{item.tipo}</p>
+                              <p className="text-slate-400">{item.fecha}</p>
+                              <span className={`inline-block mt-1 px-2 py-0.5 rounded-full font-semibold text-xs ${estadoBadge(item.estado)}`}>{item.estado}</span>
+                              <button onClick={() => descargarQR(item.qrData||item.id, `qr-${item.id}`)}
+                                className="mt-2 bg-blue-900 hover:bg-blue-800 text-white text-xs px-3 py-1 rounded-lg w-fit transition">
+                                📥 Descargar
+                              </button>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div className="space-y-4">
+                <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+                  <h3 className="font-bold text-slate-800 mb-4">¿Cómo usar tu QR?</h3>
+                  <div className="space-y-4">
+                    {[
+                      ["1","Descarga el QR","Usa el botón de descarga para guardar la imagen en tu dispositivo."],
+                      ["2","Guárdalo accesible","En tu galería o captúralo. No necesitas internet para mostrarlo."],
+                      ["3","Preséntalo en control","El funcionario lo escanea y reduce hasta un 60% el tiempo de espera."],
+                      ["4","Tus datos son seguros","El QR solo contiene el ID — los detalles quedan en servidores seguros."],
+                    ].map(([n,t,d]) => (
+                      <div key={n} className="flex gap-3">
+                        <div className="w-7 h-7 bg-cyan-100 text-cyan-800 rounded-full inline-flex items-center justify-center font-bold text-xs shrink-0">{n}</div>
+                        <div><p className="font-semibold text-slate-800 text-sm">{t}</p><p className="text-xs text-slate-500 mt-0.5">{d}</p></div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-cyan-50 border border-cyan-200 rounded-2xl p-5">
+                  <h4 className="font-bold text-cyan-900 text-sm mb-2">📲 Tip: Pantalla de bloqueo</h4>
+                  <p className="text-xs text-cyan-800">Establece el QR como fondo de pantalla para presentarlo sin desbloquear el dispositivo en el control.</p>
+                </div>
+                <div className="bg-white border border-slate-200 rounded-2xl p-5">
+                  <h4 className="font-bold text-slate-800 text-sm mb-3">Leyenda de Estados</h4>
+                  <div className="space-y-2 text-xs">
+                    {[["Aprobado / Validado","Listo para presentar","bg-green-100 text-green-700"],
+                      ["Revisión Pendiente","Inspección en frontera","bg-orange-100 text-orange-700"],
+                      ["Validado PDI","Confirmado por PDI","bg-blue-100 text-blue-700"]].map(([e,d,cls])=>(
+                      <div key={e} className="flex items-start gap-2">
+                        <span className={`${cls} px-2 py-0.5 rounded-full font-semibold shrink-0`}>{e}</span>
+                        <span className="text-slate-500">{d}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+
+        {/* ═══ CONTACTO ══════════════════════════════════════════════════════ */}
+        {activeTab === "contacto" && (
+          <section className="max-w-4xl mx-auto px-8 py-12">
+            <div className="bg-white rounded-3xl shadow-md border border-slate-200 p-8 md:p-12">
+              <h2 className="text-3xl font-bold text-center mb-2">Atención Ciudadana</h2>
+              <p className="text-slate-500 text-center mb-8">¿Dudas sobre tus trámites o validación de QR? Estamos para ayudarte.</p>
+              <div className="grid md:grid-cols-2 gap-10">
+                <div className="space-y-4">
+                  <h3 className="font-bold text-xl text-slate-800">Formulario de Consultas</h3>
+                  <Field label="Email de contacto">
+                    <input
+                      type="text"
+                      placeholder="ejemplo@correo.com"
+                      value={contactEmail}
+                      onChange={handleEmailChange}
+                      className={inp}
+                    />
+                    {comicSans && (
+                      <p className="text-xs text-purple-600 font-bold mt-1 modal-fade-in">
+                        🎨 ¡Modo Comic Sans activado! Escribe algo distinto para desactivarlo.
+                      </p>
+                    )}
+                  </Field>
+                  <Field label="Asunto">
+                    <select className={`${inp} bg-white`}>
+                      <option>Problema con validación de patente</option>
+                      <option>Error en declaración SAG</option>
+                      <option>Consulta sobre permiso de menores</option>
+                      <option>Consulta general de requisitos</option>
+                    </select>
+                  </Field>
+                  <Field label="Mensaje">
+                    <textarea rows="4" placeholder="Escriba su consulta aquí..." className={inp}></textarea>
+                  </Field>
+                  <button onClick={() => alert("Mensaje enviado al departamento de atención.")}
+                    className="w-full bg-blue-900 hover:bg-blue-800 text-white font-semibold py-3 rounded-xl text-sm transition hover:scale-[1.01]">
+                    Enviar Mensaje
+                  </button>
+                </div>
+                <div className="space-y-5 border-t md:border-t-0 md:border-l pt-6 md:pt-0 md:pl-8 border-slate-200">
+                  <h3 className="font-bold text-xl text-slate-800">Canales Oficiales</h3>
+                  <div><p className="font-bold text-sm">📍 Dirección Central</p><p className="text-sm text-slate-500">Plaza Sotomayor 60, Valparaíso, Chile</p></div>
+                  <div><p className="font-bold text-sm">📞 Teléfono</p><p className="text-sm text-slate-500">+56 2 2441 2000 · Lun–Vie 08:30–17:30</p></div>
+                  <div>
+                    <p className="font-bold text-sm mb-2">🌐 Enlaces de Interés</p>
+                    <ul className="space-y-2 text-sm">
+                      <li><a href="https://www.sag.gob.cl" target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline font-semibold">www.sag.gob.cl</a></li>
+                      <li><a href="https://www.pdichile.cl" target="_blank" rel="noopener noreferrer" className="text-blue-700 hover:underline font-semibold">pdichile.cl</a></li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        )}
+      </div>
+
+      {/* ═══ MODALES ═══════════════════════════════════════════════════════════ */}
+
+      {modal === "auto" && (
+        <Modal title="🚗 Admisión Temporal de Vehículos" accentColor="blue" onClose={() => setModal(null)}>
+          {!autoComp ? (
+            <form onSubmit={handleAutoSubmit} className="grid md:grid-cols-2 gap-4">
+              <div className="col-span-2"><p className="text-sm text-slate-500">Completa los datos del vehículo y su propietario para generar el documento de admisión temporal.</p></div>
+              <Field label="Nombre del propietario">
+                <input name="propietario" value={autoData.propietario} onChange={mkChange(setAutoData)} placeholder="Ej: María González" className={inp} required />
+              </Field>
+              <Field label="RUT Propietario">
+                <input name="rutPropietario" value={autoData.rutPropietario} onChange={mkChange(setAutoData)} placeholder="12.345.678-9" className={inp} required />
+              </Field>
+              <Field label="Marca">
+                <input name="marca" value={autoData.marca} onChange={mkChange(setAutoData)} placeholder="Toyota" className={inp} required />
+              </Field>
+              <Field label="Modelo">
+                <input name="modelo" value={autoData.modelo} onChange={mkChange(setAutoData)} placeholder="RAV4" className={inp} required />
+              </Field>
+              <Field label="Patente">
+                <input name="patenteAuto" value={autoData.patenteAuto} onChange={mkChange(setAutoData)} placeholder="ABCD-12" className={`${inp} uppercase`} required />
+              </Field>
+              <Field label="Año">
+                <input name="anio" type="number" value={autoData.anio} onChange={mkChange(setAutoData)} placeholder="2022" className={inp} required />
+              </Field>
+              <div className="col-span-2">
+                <Field label="Seguro Internacional Obligatorio (RCA)">
+                  <select name="seguroInternacional" value={autoData.seguroInternacional} onChange={mkChange(setAutoData)} className={`${inp} bg-white`}>
+                    <option value="si">Sí, vigente para el país de destino</option>
+                    <option value="no">No — regularizar en aduana</option>
+                  </select>
+                </Field>
+              </div>
+              <div className="col-span-2 flex gap-3 mt-2">
+                <button type="submit" className="flex-1 bg-blue-900 hover:bg-blue-800 text-white font-semibold py-3 rounded-xl text-sm shadow transition">Validar y Registrar</button>
+                <button type="button" onClick={() => setModal(null)} className="px-4 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-sm transition">Cancelar</button>
+              </div>
+            </form>
+          ) : (
+            <ComprobanteQR id={autoComp} qrData={autoData.patenteAuto.toUpperCase()}
+              detalles={[
+                {label:"Propietario", valor:autoData.propietario},
+                {label:"Vehículo",    valor:`${autoData.marca} ${autoData.modelo} (${autoData.anio})`},
+                {label:"Patente",     valor:autoData.patenteAuto.toUpperCase()},
+                {label:"Seguro RCA",  valor:autoData.seguroInternacional==="si"?"Vigente":"Regularizar en aduana"},
+              ]}
+              onVolver={() => setModal(null)} />
+          )}
+        </Modal>
+      )}
+
+      {modal === "sag" && (
+        <Modal title="🌱 Declaración Jurada SAG-Aduanas" accentColor="green" onClose={() => setModal(null)}>
+          {!sagComp ? (
+            <form onSubmit={handleSagSubmit} className="space-y-4">
+              <p className="text-sm text-slate-500">Declara si portas productos de origen vegetal o animal. La omisión puede resultar en multas de hasta 10 UTM (Ley SAG N°18.755).</p>
+              <div className="grid md:grid-cols-2 gap-4">
+                <Field label="Nombre del declarante">
+                  <input name="nombreDeclarante" value={sagData.nombreDeclarante} onChange={mkChange(setSagData)} placeholder="Nombre completo" className={inp} required />
+                </Field>
+                <Field label="RUT o Pasaporte">
+                  <input name="rutDeclarante" value={sagData.rutDeclarante} onChange={mkChange(setSagData)} placeholder="12.345.678-9" className={inp} required />
+                </Field>
+                <div className="md:col-span-2">
+                  <Field label="País de procedencia">
+                    <input name="paisProcedencia" value={sagData.paisProcedencia} onChange={mkChange(setSagData)} placeholder="Ej: Argentina" className={inp} required />
+                  </Field>
+                </div>
+              </div>
+              <div className="mt-2">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wide mb-3">¿Porta alguno de estos productos?</p>
+                <div className="space-y-2">
+                  {[
+                    {name:"portaVegetal",  label:"🌿 Productos vegetales (frutas, verduras, semillas, plantas, madera)"},
+                    {name:"portaAnimal",   label:"🐄 Productos animales (carnes, embutidos, lácteos, huevos, cueros)"},
+                    {name:"portaAlimentos",label:"🍱 Alimentos elaborados o en conserva no declarados comercialmente"},
+                  ].map(it => (
+                    <div key={it.name} className="flex items-center justify-between bg-slate-50 rounded-xl p-3 border border-slate-200">
+                      <span className="text-xs text-slate-700 flex-1 mr-3">{it.label}</span>
+                      <select name={it.name} value={sagData[it.name]} onChange={mkChange(setSagData)}
+                        className="p-2 text-xs rounded-lg border border-slate-300 bg-white focus:outline-none focus:border-green-600">
+                        <option value="no">No porta</option>
+                        <option value="si">Sí porta</option>
+                      </select>
+                    </div>
+                  ))}
+                </div>
+              </div>
+              {(sagData.portaVegetal==="si"||sagData.portaAnimal==="si"||sagData.portaAlimentos==="si") && (
+                <div className="modal-fade-in">
+                  <Field label="Descripción de productos declarados">
+                    <textarea name="descripcionProductos" value={sagData.descripcionProductos} onChange={mkChange(setSagData)}
+                      placeholder="Tipo, cantidad aproximada y país de origen de cada producto..."
+                      rows="3" className={`${inp} bg-orange-50 border-orange-300 focus:border-orange-500`} />
+                  </Field>
+                  <p className="text-xs text-orange-600 mt-1">⚠️ Estos productos serán sujetos a revisión fitosanitaria en frontera.</p>
+                </div>
+              )}
+              <div className="bg-green-50 border border-green-200 rounded-xl p-3 text-xs text-green-800">
+                <strong>Declaración Jurada:</strong> Declaro que la información ingresada es verídica y completa.
+              </div>
+              <div className="flex gap-3 mt-2">
+                <button type="submit" className="flex-1 bg-green-700 hover:bg-green-800 text-white font-semibold py-3 rounded-xl text-sm transition">Firmar y Enviar</button>
+                <button type="button" onClick={() => setModal(null)} className="px-4 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-sm transition">Cancelar</button>
+              </div>
+            </form>
+          ) : (
+            <ComprobanteQR id={sagComp} qrData={sagComp}
+              detalles={[
+                {label:"Declarante",  valor:sagData.nombreDeclarante},
+                {label:"RUT",         valor:sagData.rutDeclarante},
+                {label:"País origen", valor:sagData.paisProcedencia},
+                {label:"Productos",   valor:(sagData.portaVegetal==="si"||sagData.portaAnimal==="si"||sagData.portaAlimentos==="si")?"Declarados — sujeto a revisión":"Ninguno"},
+              ]}
+              onVolver={() => setModal(null)} />
+          )}
+        </Modal>
+      )}
+
+      {/* ── Modal Menores: compacto, sin scroll ── */}
+      {modal === "menores" && (
+        <Modal title="📄 Permiso de Viaje — Menor de Edad" accentColor="purple" onClose={() => setModal(null)}>
+          {!menComp ? (
+            <form onSubmit={handleMenSubmit} className="space-y-3">
+              <p className="text-sm text-slate-500">Adjunta la autorización notarial para validación electrónica con PDI.</p>
+
+              {/* Menor + Autorizante en dos columnas compactas */}
+              <div className="grid grid-cols-2 gap-3">
+                <div className="col-span-2">
+                  <p className="text-xs font-bold text-purple-800 uppercase tracking-wide mb-2">Datos del Menor</p>
+                </div>
+                <Field label="Nombre del menor">
+                  <input name="nombreMenor" value={menData.nombreMenor} onChange={mkChange(setMenData)} placeholder="Nombre completo" className={`${inp} py-2`} required />
+                </Field>
+                <Field label="RUT del menor">
+                  <input name="rutMenor" value={menData.rutMenor} onChange={mkChange(setMenData)} placeholder="12.345.678-9" className={`${inp} py-2`} required />
+                </Field>
+                <Field label="Fecha de nacimiento">
+                  <input type="date" name="fechaNacimiento" value={menData.fechaNacimiento} onChange={mkChange(setMenData)} className={`${inp} py-2`} />
+                </Field>
+                <Field label="Destino del viaje">
+                  <input name="destinoViaje" value={menData.destinoViaje} onChange={mkChange(setMenData)} placeholder="País / Ciudad" className={`${inp} py-2`} />
+                </Field>
+
+                <div className="col-span-2 pt-1">
+                  <p className="text-xs font-bold text-purple-800 uppercase tracking-wide mb-2">Datos del Adulto Autorizante</p>
+                </div>
+                <Field label="Nombre padre/madre/tutor">
+                  <input name="nombreAutorizante" value={menData.nombreAutorizante} onChange={mkChange(setMenData)} placeholder="Nombre completo" className={`${inp} py-2`} required />
+                </Field>
+                <Field label="RUT del autorizante">
+                  <input name="rutAutorizante" value={menData.rutAutorizante} onChange={mkChange(setMenData)} placeholder="12.345.678-9" className={`${inp} py-2`} required />
+                </Field>
+                <div className="col-span-2">
+                  <Field label="Relación con el menor">
+                    <select name="relacionMenor" value={menData.relacionMenor} onChange={mkChange(setMenData)} className={`${inp} py-2 bg-white`}>
+                      <option value="">Seleccione</option>
+                      <option>Padre / Madre</option>
+                      <option>Tutor Legal</option>
+                      <option>Abuelo/a</option>
+                      <option>Otro familiar autorizado</option>
+                    </select>
+                  </Field>
+                </div>
+              </div>
+
+              {/* Upload compacto */}
+              <div>
+                <label className="text-xs font-bold text-slate-500 uppercase tracking-wide block mb-1">Documento Notarial (obligatorio)</label>
+                <label className="border-2 border-dashed border-purple-300 hover:border-purple-600 rounded-xl p-3 text-center cursor-pointer flex items-center justify-center gap-3 bg-purple-50 transition">
+                  <input type="file" accept=".pdf,image/*" className="hidden"
+                    onChange={e => e.target.files?.[0] && setMenData(p => ({...p, documentoNotarial:e.target.files[0].name}))} />
+                  <span className="text-xl">📎</span>
+                  <div className="text-left">
+                    <p className="text-xs font-semibold text-purple-800">
+                      {menData.documentoNotarial ? `✓ ${menData.documentoNotarial}` : "Haz clic para subir el documento notarial"}
+                    </p>
+                    <p className="text-xs text-slate-400">PDF, JPG o PNG — Máx. 10 MB</p>
+                  </div>
+                </label>
+              </div>
+
+              <div className="bg-purple-50 border border-purple-200 rounded-xl p-3 text-xs text-purple-800">
+                <strong>Aviso PDI:</strong> El documento será validado electrónicamente en frontera.
+              </div>
+              <div className="flex gap-3">
+                <button type="submit" className="flex-1 bg-purple-700 hover:bg-purple-800 text-white font-semibold py-2.5 rounded-xl text-sm transition">Enviar para Validación</button>
+                <button type="button" onClick={() => setModal(null)} className="px-4 bg-slate-200 hover:bg-slate-300 text-slate-700 rounded-xl text-sm transition">Cancelar</button>
+              </div>
+            </form>
+          ) : (
+            <ComprobanteQR id={menComp} qrData={menComp}
+              detalles={[
+                {label:"Menor",       valor:menData.nombreMenor},
+                {label:"RUT Menor",   valor:menData.rutMenor},
+                {label:"Destino",     valor:menData.destinoViaje||"No especificado"},
+                {label:"Autorizante", valor:`${menData.nombreAutorizante} (${menData.relacionMenor||"Tutor"})`},
+                {label:"Documento",   valor:`✓ ${menData.documentoNotarial}`},
+              ]}
+              onVolver={() => setModal(null)} />
+          )}
+        </Modal>
+      )}
+
+      <footer className="bg-blue-950 text-white text-center py-6 mt-12">
+        <p className="text-sm opacity-70">Prototipo Académico · Ingeniería de Software · DuocUC</p>
+      </footer>
+    </div>
+  );
+}
+
+// ─── Toast component ──────────────────────────────────────────────────────────
+const TIPS = [
+  { icon:"⚡", msg:"Tip: registra tu vehículo antes de llegar y ahorra hasta 2 hrs de espera." },
+  { icon:"🌿", msg:"Recuerda declarar productos SAG — omitirlo tiene multa de hasta 10 UTM." },
+  { icon:"📱", msg:"Guarda tu QR en la pantalla de bloqueo para mostrarlo sin desbloquear." },
+  { icon:"👶", msg:"¿Viajás con menores? Sube el permiso notarial antes de llegar a frontera." },
+];
+
+function Toast() {
+  const [visible, setVisible] = useState(false);
+  const [leaving, setLeaving] = useState(false);
+  const [tip] = useState(() => TIPS[Math.floor(Math.random() * TIPS.length)]);
+
+  useEffect(() => {
+    const show = setTimeout(() => setVisible(true), 1200);
+    const hide = setTimeout(() => {
+      setLeaving(true);
+      setTimeout(() => setVisible(false), 300);
+    }, 5200);
+    return () => { clearTimeout(show); clearTimeout(hide); };
+  }, []);
+
+  if (!visible) return null;
+  return (
+    <div className={`toast${leaving ? " out" : ""}`}>
+      <span>{tip.icon}</span>
+      <span>{tip.msg}</span>
+      <button onClick={() => { setLeaving(true); setTimeout(() => setVisible(false), 300); }}
+        style={{marginLeft:8, opacity:.6, background:"none", border:"none", color:"white", fontSize:16, cursor:"pointer", display:"inline-flex", alignItems:"center", justifyContent:"center"}}>
+        ×
+      </button>
+    </div>
+  );
+}
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<AduanasPrototype />);
+  </script>
+</body>
+</html>
