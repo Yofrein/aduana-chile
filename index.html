@@ -143,13 +143,32 @@ function AduanasPrototype() {
   // ─── Comic Sans easter egg ────────────────────────────────────────────────
   const [comicSans, setComicSans] = useState(false);
   const [contactEmail, setContactEmail] = useState("");
+  const sansAudioRef = useRef(null);
 
   useEffect(() => {
     if (comicSans) {
+      // Por si quedó algo sonando de antes, lo detenemos primero
+      if (sansAudioRef.current) {
+        sansAudioRef.current.pause();
+        sansAudioRef.current.currentTime = 0;
+      }
       const audio = new Audio(SANS_SOUND);
       audio.volume = 0.6;
+      sansAudioRef.current = audio;
       audio.play().catch(() => {}); // por si el navegador bloquea el autoplay
+    } else if (sansAudioRef.current) {
+      // Se desactivó el easter egg (sacaste la "e") → cortamos el audio
+      sansAudioRef.current.pause();
+      sansAudioRef.current.currentTime = 0;
+      sansAudioRef.current = null;
     }
+    return () => {
+      if (sansAudioRef.current) {
+        sansAudioRef.current.pause();
+        sansAudioRef.current.currentTime = 0;
+        sansAudioRef.current = null;
+      }
+    };
   }, [comicSans]);
 
   const handleEmailChange = (e) => {
@@ -444,18 +463,17 @@ function AduanasPrototype() {
         <div
           className="fixed z-[9999] pointer-events-none select-none modal-fade-in overflow-hidden"
           style={{
-            top: "-14px",
-            right: "18px",
-            width: "100px",
-            height: "62px",
-            transform: "rotate(-22deg)",
-            transformOrigin: "top right",
+            top: "50%",
+            right: "-45px",
+            width: "130px",
+            height: "130px",
+            transform: "translateY(-50%) rotate(-18deg)",
           }}
         >
           <img
             src={SANS_IMG}
             alt="cameo"
-            style={{ width: "100px", height: "auto", display: "block" }}
+            style={{ width: "130px", height: "auto", display: "block" }}
           />
         </div>
       )}
