@@ -124,7 +124,147 @@ const inp = "p-3 text-sm rounded-xl border border-slate-300 focus:outline-none f
 // ════════════════════════════════════════════════════════════════════════════════
 const NAV_TABS = [["inicio","Inicio"],["tramites","Trámites"],["fronteras","Estado Fronteras"],["qr","Código QR"],["contacto","Contacto"]];
 
-function AduanasPrototype() {
+
+// ─── Usuarios mock ───────────────────────────────────────────────────────────
+const USUARIOS_MOCK = [
+  { rut: "12345678-9", password: "aduana123", nombre: "Juan Pérez", rol: "Funcionario", avatar: "JP" },
+  { rut: "98765432-1", password: "viajero",   nombre: "María González", rol: "Viajero",     avatar: "MG" },
+  { rut: "admin",      password: "admin",      nombre: "Administrador",  rol: "Admin",      avatar: "AD" },
+];
+
+// ─── Componente Login ─────────────────────────────────────────────────────────
+function LoginScreen({ onLogin }) {
+  const [rut, setRut] = React.useState("");
+  const [pass, setPass] = React.useState("");
+  const [error, setError] = React.useState("");
+  const [loading, setLoading] = React.useState(false);
+  const [showPass, setShowPass] = React.useState(false);
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    setLoading(true);
+    setError("");
+    // Simular latencia de red
+    setTimeout(() => {
+      const user = USUARIOS_MOCK.find(u => u.rut === rut.trim() && u.password === pass);
+      if (user) {
+        onLogin(user);
+      } else {
+        setError("RUT o contraseña incorrectos. Verifique sus credenciales.");
+      }
+      setLoading(false);
+    }, 800);
+  };
+
+  const loginRapido = (u) => {
+    setRut(u.rut);
+    setPass(u.password);
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-blue-950 via-blue-900 to-blue-800 flex flex-col items-center justify-center px-4">
+      <style>{`
+        @keyframes loginFadeIn { from{opacity:0;transform:translateY(20px)} to{opacity:1;transform:translateY(0)} }
+        .login-card { animation: loginFadeIn .4s cubic-bezier(.34,1.3,.64,1) both; }
+        @keyframes spinnerAnim { to{transform:rotate(360deg)} }
+        .spinner { animation: spinnerAnim .7s linear infinite; border-radius:50%; width:18px;height:18px;border:3px solid rgba(255,255,255,.3);border-top-color:#fff;display:inline-block; }
+      `}</style>
+
+      {/* Logo / Header */}
+      <div className="text-center mb-8 login-card" style={{animationDelay:'0s'}}>
+        <div className="inline-flex items-center justify-center w-16 h-16 bg-white/10 rounded-2xl mb-4 border border-white/20">
+          <span className="text-3xl">🛃</span>
+        </div>
+        <h1 className="text-white text-3xl font-bold tracking-tight">ADUANA CHILE</h1>
+        <p className="text-blue-300 text-sm mt-1">Sistema Inteligente de Fronteras</p>
+      </div>
+
+      {/* Card */}
+      <div className="w-full max-w-sm login-card bg-white rounded-3xl shadow-2xl p-8" style={{animationDelay:'.08s'}}>
+        <h2 className="text-slate-800 text-xl font-bold mb-1">Iniciar sesión</h2>
+        <p className="text-slate-500 text-sm mb-6">Ingresa con tus credenciales institucionales</p>
+
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">RUT / Pasaporte</label>
+            <input
+              type="text"
+              value={rut}
+              onChange={e => setRut(e.target.value)}
+              placeholder="Ej: 12345678-9"
+              required
+              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+            />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-slate-600 mb-1.5 uppercase tracking-wide">Contraseña</label>
+            <div className="relative">
+              <input
+                type={showPass ? "text" : "password"}
+                value={pass}
+                onChange={e => setPass(e.target.value)}
+                placeholder="Tu contraseña"
+                required
+                className="w-full px-4 py-2.5 pr-10 rounded-xl border border-slate-200 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
+              />
+              <button type="button" onClick={() => setShowPass(s=>!s)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-base"
+                aria-label="Mostrar/ocultar contraseña">
+                {showPass ? "🙈" : "👁️"}
+              </button>
+            </div>
+          </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-200 text-red-700 text-xs rounded-xl px-3 py-2.5 flex items-start gap-2">
+              <span>⚠️</span><span>{error}</span>
+            </div>
+          )}
+
+          <button type="submit" disabled={loading}
+            className="w-full bg-blue-700 hover:bg-blue-800 text-white font-semibold py-2.5 rounded-xl transition flex items-center justify-center gap-2 disabled:opacity-70">
+            {loading ? <><span className="spinner"></span> Verificando...</> : "Entrar al sistema"}
+          </button>
+        </form>
+
+        {/* Accesos rápidos demo */}
+        <div className="mt-6 pt-5 border-t border-slate-100">
+          <p className="text-xs text-slate-400 text-center mb-3 font-medium">ACCESO RÁPIDO (DEMO)</p>
+          <div className="space-y-2">
+            {USUARIOS_MOCK.map(u => (
+              <button key={u.rut} type="button" onClick={() => loginRapido(u)}
+                className="w-full text-left px-3 py-2 rounded-xl hover:bg-slate-50 border border-slate-100 flex items-center gap-3 transition group">
+                <div className="w-8 h-8 rounded-full bg-blue-100 text-blue-700 text-xs font-bold flex items-center justify-center shrink-0">
+                  {u.avatar}
+                </div>
+                <div className="min-w-0">
+                  <p className="text-xs font-semibold text-slate-700 truncate">{u.nombre}</p>
+                  <p className="text-xs text-slate-400">{u.rol} · RUT: {u.rut}</p>
+                </div>
+                <span className="ml-auto text-slate-300 group-hover:text-blue-500 text-xs">Usar →</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <p className="text-blue-300/50 text-xs mt-6">Prototipo funcional · Aduana Chile © 2025</p>
+    </div>
+  );
+}
+
+// ─── App wrapper con autenticación ───────────────────────────────────────────
+function App() {
+  const [usuario, setUsuario] = React.useState(null);
+
+  if (!usuario) {
+    return <LoginScreen onLogin={setUsuario} />;
+  }
+
+  return <AduanasPrototype usuario={usuario} onLogout={() => setUsuario(null)} />;
+}
+
+function AduanasPrototype({ usuario, onLogout }) {
   const [activeTab, setActiveTab] = useState("inicio");
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isMobile, setIsMobile] = useState(() => typeof window !== "undefined" && window.innerWidth < 768);
@@ -483,6 +623,20 @@ function AduanasPrototype() {
         <div>
           <h1 className="text-xl sm:text-3xl font-bold tracking-tight">ADUANA CHILE</h1>
           <p className="text-xs sm:text-sm opacity-70">Sistema Inteligente de Fronteras</p>
+        </div>
+        <div className="flex items-center gap-3 ml-auto">
+          {!isMobile && (
+            <div className="flex items-center gap-2 bg-white/10 rounded-xl px-3 py-1.5 border border-white/20">
+              <div className="w-7 h-7 rounded-full bg-white/20 text-white text-xs font-bold flex items-center justify-center">{usuario ? usuario.avatar : "?"}</div>
+              <div className="text-xs leading-tight hidden md:block">
+                <p className="font-semibold text-white">{usuario ? usuario.nombre : ""}</p>
+                <p className="text-blue-300">{usuario ? usuario.rol : ""}</p>
+              </div>
+            </div>
+          )}
+          <button onClick={onLogout} title="Cerrar sesión"
+            className="w-9 h-9 rounded-xl bg-white/10 hover:bg-red-500/70 text-white text-base border border-white/20 flex items-center justify-center transition"
+            aria-label="Cerrar sesión">🚪</button>
         </div>
         {!isMobile && (
           <nav className="flex gap-6 text-sm font-medium">
@@ -1203,7 +1357,7 @@ function Toast() {
 
 
 ReactDOM.createRoot(document.getElementById('root')).render(
-  React.createElement(AduanasPrototype)
+  React.createElement(App)
 );
   </script>
 </body>
